@@ -145,9 +145,9 @@ public class MainActivity extends Activity {
         });
         root.addView(rg2);
 
-        seek(root, "Glow depth (dp)", "glow_depth", 26, 80);
+        seek(root, "Glow depth (dp)", "glow_depth2", 10, 40);
         seek(root, "Screen corner radius (dp)", "glow_corner", 36, 80);
-        seek(root, "Hold time (ms)", "glow_hold", 1200, 4000);
+        seek(root, "Hold time (ms)", "glow_hold2", 500, 2000);
 
         root.addView(button("Test glow", new View.OnClickListener() {
             public void onClick(View v) {
@@ -290,7 +290,7 @@ public class MainActivity extends Activity {
             hideGlow();
             float d = getResources().getDisplayMetrics().density;
             final GlowView g = new GlowView(this,
-                    (int) (sp.getInt("glow_depth", 26) * d),
+                    (int) (sp.getInt("glow_depth2", 10) * d),
                     sp.getInt("glow_corner", 36) * d,
                     palette(sp.getString("glow_style", "bixby")));
             WindowManager.LayoutParams p = new WindowManager.LayoutParams(
@@ -312,8 +312,8 @@ public class MainActivity extends Activity {
                 return;
             }
             glow = g;
-            final int in = 450, out = 700;
-            final int hold = Math.max(200, sp.getInt("glow_hold", 1200));
+            final int in = 300, out = 500;
+            final int hold = Math.max(100, sp.getInt("glow_hold2", 500));
             final int total = in + hold + out;
             anim = ValueAnimator.ofFloat(0f, 1f);
             anim.setDuration(total);
@@ -328,7 +328,7 @@ public class MainActivity extends Activity {
                     else k = 1f - (ms - in - hold) / out;
                     k = Math.max(0f, Math.min(1f, k));
                     k = k * k * (3f - 2f * k);
-                    g.set(k, 360f * 1.3f * t);
+                    g.set(k, 360f * 0.7f * t);
                 }
             });
             anim.addListener(new AnimatorListenerAdapter() {
@@ -472,11 +472,11 @@ class GlowView extends View {
         mat.setRotate(angle, getWidth() / 2f, getHeight() / 2f);
         sg.setLocalMatrix(mat);
         paint.setShader(sg);
-        paint.setAlpha((int) (255 * k * 0.2f));
-        int layers = 14;
+        paint.setAlpha((int) (255 * k * 0.075f));
+        int layers = 16;
         for (int i = layers; i >= 1; i--) {
             paint.setStrokeWidth(2f * depth * i / layers);
             c.drawRoundRect(rect, corner, corner, paint);
         }
     }
-                                    }
+            }
