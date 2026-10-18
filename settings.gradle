@@ -6,3 +6,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "BixbyTest"
 include ':app'
+include ':edge'
