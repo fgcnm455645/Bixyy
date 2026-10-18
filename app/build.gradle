@@ -3,11 +3,21 @@ android {
     namespace 'com.bxt.test'
     compileSdk 34
     defaultConfig {
-        applicationId 'com.bxt.test'
+        applicationId 'com.bxt.notchbixby'
         minSdk 26
         targetSdk 34
         versionCode 1
         versionName '1.0'
+    }
+    signingConfigs {
+        debug {
+            if (rootProject.file('debug.keystore').exists()) {
+                storeFile rootProject.file('debug.keystore')
+                storePassword 'android'
+                keyAlias 'androiddebugkey'
+                keyPassword 'android'
+            }
+        }
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
