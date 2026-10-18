@@ -1,15 +1,23 @@
 package com.bxt.test;
 
 import android.accessibilityservice.AccessibilityService;
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Matrix;
+import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
+import android.graphics.RectF;
+import android.graphics.SweepGradient;
 import android.hardware.display.DisplayManager;
 import android.net.Uri;
 import android.os.Build;
@@ -23,6 +31,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.animation.LinearInterpolator;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
@@ -103,6 +112,49 @@ public class MainActivity extends Activity {
         seek(root, "Zone extra width (dp)", "pad_x", 30, 120);
         seek(root, "Zone extra height (dp)", "pad_y", 14, 80);
 
+        TextView l2 = new TextView(this);
+        l2.setText("Glow effect");
+        l2.setTextSize(18);
+        l2.setPadding(0, dp(24), 0, 0);
+        root.addView(l2);
+
+        CheckBox cbg = new CheckBox(this);
+        cbg.setText("Show glow on swipe");
+        cbg.setChecked(sp.getBoolean("glow_on", true));
+        cbg.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(CompoundButton c, boolean on) {
+                sp.edit().putBoolean("glow_on", on).apply();
+            }
+        });
+        root.addView(cbg);
+
+        final RadioGroup rg2 = new RadioGroup(this);
+        final RadioButton rbB = new RadioButton(this);
+        rbB.setText("Bixby colors");
+        rbB.setId(View.generateViewId());
+        final RadioButton rbG = new RadioButton(this);
+        rbG.setText("Gemini colors");
+        rbG.setId(View.generateViewId());
+        rg2.addView(rbB);
+        rg2.addView(rbG);
+        rg2.check("gemini".equals(sp.getString("glow_style", "bixby")) ? rbG.getId() : rbB.getId());
+        rg2.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
+            public void onCheckedChanged(RadioGroup g, int id) {
+                sp.edit().putString("glow_style", id == rbG.getId() ? "gemini" : "bixby").apply();
+            }
+        });
+        root.addView(rg2);
+
+        seek(root, "Glow depth (dp)", "glow_depth", 26, 80);
+        seek(root, "Screen corner radius (dp)", "glow_corner", 36, 80);
+        seek(root, "Hold time (ms)", "glow_hold", 1200, 4000);
+
+        root.addView(button("Test glow", new View.OnClickListener() {
+            public void onClick(View v) {
+                sp.edit().putLong("glow_test", System.currentTimeMillis()).apply();
+            }
+        }));
+
         root.addView(button("Test: launch Ask Bixby now", new View.OnClickListener() {
             public void onClick(View v) {
                 BixbyLauncher.launch(MainActivity.this, "voice".equals(sp.getString("mode", "type")));
@@ -164,11 +216,17 @@ public class MainActivity extends Activity {
     public static class NotchService extends AccessibilityService {
         WindowManager wm;
         View zone;
+        View glow;
+        ValueAnimator anim;
         SharedPreferences sp;
         final SharedPreferences.OnSharedPreferenceChangeListener lis =
                 new SharedPreferences.OnSharedPreferenceChangeListener() {
                     public void onSharedPreferenceChanged(SharedPreferences p, String k) {
-                        rebuild();
+                        if ("glow_test".equals(k)) {
+                            showGlow();
+                        } else if ("pad_x".equals(k) || "pad_y".equals(k) || "show_zone".equals(k)) {
+                            rebuild();
+                        }
                     }
                 };
 
@@ -196,6 +254,7 @@ public class MainActivity extends Activity {
         @Override
         public boolean onUnbind(Intent i) {
             remove();
+            hideGlow();
             if (sp != null) sp.unregisterOnSharedPreferenceChangeListener(lis);
             return super.onUnbind(i);
         }
@@ -205,6 +264,80 @@ public class MainActivity extends Activity {
                 try { wm.removeView(zone); } catch (Throwable t) {}
             }
             zone = null;
+        }
+
+        void hideGlow() {
+            if (anim != null) {
+                anim.removeAllListeners();
+                anim.cancel();
+                anim = null;
+            }
+            if (glow != null && wm != null) {
+                try { wm.removeView(glow); } catch (Throwable t) {}
+            }
+            glow = null;
+        }
+
+        static int[] palette(String style) {
+            if ("gemini".equals(style)) {
+                return new int[]{0xFF4285F4, 0xFF9B72CB, 0xFFD96570, 0xFFF9AB00, 0xFF34A853, 0xFF4285F4};
+            }
+            return new int[]{0xFF2F7BFF, 0xFF4A4BEF, 0xFF7B3FE4, 0xFFB9A8FF, 0xFF7B3FE4, 0xFF4A4BEF, 0xFF2F7BFF};
+        }
+
+        void showGlow() {
+            if (wm == null || sp == null || !sp.getBoolean("glow_on", true)) return;
+            hideGlow();
+            float d = getResources().getDisplayMetrics().density;
+            final GlowView g = new GlowView(this,
+                    (int) (sp.getInt("glow_depth", 26) * d),
+                    sp.getInt("glow_corner", 36) * d,
+                    palette(sp.getString("glow_style", "bixby")));
+            WindowManager.LayoutParams p = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    PixelFormat.TRANSLUCENT);
+            if (Build.VERSION.SDK_INT >= 28) {
+                p.layoutInDisplayCutoutMode =
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            }
+            try {
+                wm.addView(g, p);
+            } catch (Throwable t) {
+                return;
+            }
+            glow = g;
+            final int in = 450, out = 700;
+            final int hold = Math.max(200, sp.getInt("glow_hold", 1200));
+            final int total = in + hold + out;
+            anim = ValueAnimator.ofFloat(0f, 1f);
+            anim.setDuration(total);
+            anim.setInterpolator(new LinearInterpolator());
+            anim.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
+                public void onAnimationUpdate(ValueAnimator a) {
+                    float t = a.getAnimatedFraction();
+                    float ms = t * total;
+                    float k;
+                    if (ms < in) k = ms / in;
+                    else if (ms < in + hold) k = 1f;
+                    else k = 1f - (ms - in - hold) / out;
+                    k = Math.max(0f, Math.min(1f, k));
+                    k = k * k * (3f - 2f * k);
+                    g.set(k, 360f * 1.3f * t);
+                }
+            });
+            anim.addListener(new AnimatorListenerAdapter() {
+                @Override
+                public void onAnimationEnd(Animator a) {
+                    hideGlow();
+                }
+            });
+            anim.start();
         }
 
         Rect cutoutRect() {
@@ -253,6 +386,7 @@ public class MainActivity extends Activity {
                                 view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
                                 BixbyLauncher.launch(NotchService.this,
                                         "voice".equals(sp.getString("mode", "type")));
+                                showGlow();
                             }
                             break;
                     }
@@ -301,3 +435,48 @@ class BixbyLauncher {
         }
     }
 }
+
+class GlowView extends View {
+    final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    final int[] colors;
+    final int depth;
+    final float corner;
+    final Matrix mat = new Matrix();
+    final RectF rect = new RectF();
+    SweepGradient sg;
+    float k, angle;
+
+    GlowView(Context c, int depth, float corner, int[] colors) {
+        super(c);
+        this.depth = depth;
+        this.corner = corner;
+        this.colors = colors;
+        paint.setStyle(Paint.Style.STROKE);
+    }
+
+    void set(float k, float angle) {
+        this.k = k;
+        this.angle = angle;
+        invalidate();
+    }
+
+    @Override
+    protected void onSizeChanged(int w, int h, int ow, int oh) {
+        sg = new SweepGradient(w / 2f, h / 2f, colors, null);
+        rect.set(0, 0, w, h);
+    }
+
+    @Override
+    protected void onDraw(Canvas c) {
+        if (sg == null || k <= 0f) return;
+        mat.setRotate(angle, getWidth() / 2f, getHeight() / 2f);
+        sg.setLocalMatrix(mat);
+        paint.setShader(sg);
+        paint.setAlpha((int) (255 * k * 0.2f));
+        int layers = 14;
+        for (int i = layers; i >= 1; i--) {
+            paint.setStrokeWidth(2f * depth * i / layers);
+            c.drawRoundRect(rect, corner, corner, paint);
+        }
+    }
+                                    }
