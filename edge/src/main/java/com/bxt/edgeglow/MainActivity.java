@@ -2,6 +2,7 @@ package com.bxt.edgeglow;
 
 import android.accessibilityservice.AccessibilityService;
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.AlertDialog;
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -30,6 +31,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.service.notification.NotificationListenerService;
@@ -155,17 +157,9 @@ public class MainActivity extends Activity {
         colorRow(root, "Color 1", "color1", 0xFF2F7BFF);
         colorRow(root, "Color 2", "color2", 0xFFB14CFF);
 
-        root.addView(button("Test glow in 5 seconds (then go Home)", new View.OnClickListener() {
-            public void onClick(View v) {
-                Toast.makeText(MainActivity.this, "Go to the home screen now", Toast.LENGTH_LONG).show();
-                new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
-                    public void run() {
-                        GlowService s = GlowService.instance;
-                        if (s != null) s.showGlow(0);
-                    }
-                }, 5000);
-            }
-        }));
+        root.addView(button("Test glow in 5 seconds (then go Home)", delayedTest(5)));
+        root.addView(button("Test glow in 30 seconds (then go Home)", delayedTest(30)));
+        root.addView(button("Test glow in 2 minutes (then go Home)", delayedTest(120)));
         root.addView(button("Test glow", new View.OnClickListener() {
             public void onClick(View v) {
                 GlowService s = GlowService.instance;
@@ -193,6 +187,21 @@ public class MainActivity extends Activity {
                 + "\nKeep-alive service: " + (KeepAlive.running ? "running" : "not running")
                 + "\nLast notification: " + sp.getString("last_event", "none yet")
                 + "\nGlow log:\n" + sp.getString("glow_log", "none yet"));
+    }
+
+    View.OnClickListener delayedTest(final int sec) {
+        return new View.OnClickListener() {
+            public void onClick(View v) {
+                Toast.makeText(MainActivity.this, "Go to the home screen now (" + sec + " s)",
+                        Toast.LENGTH_LONG).show();
+                new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                    public void run() {
+                        GlowService s = GlowService.instance;
+                        if (s != null) s.showGlow(0);
+                    }
+                }, sec * 1000L);
+            }
+        };
     }
 
     void syncKeep() {
@@ -579,7 +588,7 @@ public class MainActivity extends Activity {
             String old = sp.getString("glow_log", "");
             String[] lines = old.isEmpty() ? new String[0] : old.split("\n");
             StringBuilder sb = new StringBuilder();
-            for (int i = Math.max(0, lines.length - 4); i < lines.length; i++) sb.append(lines[i]).append("\n");
+            for (int i = Math.max(0, lines.length - 7); i < lines.length; i++) sb.append(lines[i]).append("\n");
             sb.append(new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date())).append(" ").append(m);
             sp.edit().putString("glow_log", sb.toString()).apply();
         }
@@ -595,7 +604,11 @@ public class MainActivity extends Activity {
             }
             if (wm == null || sp == null) return;
             hideGlow();
-            stat("start");
+            ActivityManager.RunningAppProcessInfo ri = new ActivityManager.RunningAppProcessInfo();
+            ActivityManager.getMyMemoryState(ri);
+            PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+            stat("start imp=" + ri.importance + " interactive=" + pm.isInteractive()
+                    + " save=" + pm.isPowerSaveMode() + " doze=" + pm.isDeviceIdleMode());
             float d = getResources().getDisplayMetrics().density;
             boolean line = !"soft".equals(sp.getString("glow_shape", "line"));
             final GlowView g = new GlowView(this, line, sp.getBoolean("line_halo", true),
@@ -625,17 +638,26 @@ public class MainActivity extends Activity {
             glow = g;
             g.play(300, Math.max(100, sp.getInt("hold_ms", 800)), 500, new Runnable() {
                 public void run() {
-                    stat("end ticks=" + g.frames + " draws=" + g.draws
-                            + " maxK=" + String.format(Locale.US, "%.2f", g.maxK));
+                    stat("end " + snap(g) + " maxK=" + String.format(Locale.US, "%.2f", g.maxK));
                     if (glow == g) hideGlow();
                 }
             });
             new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
                 public void run() {
-                    stat("+1.5s attached=" + g.isAttachedToWindow() + " size=" + g.getWidth() + "x"
-                            + g.getHeight() + " ticks=" + g.frames + " draws=" + g.draws);
+                    stat("+0.3s " + snap(g));
+                }
+            }, 300);
+            new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                public void run() {
+                    stat("+1.5s " + snap(g));
                 }
             }, 1500);
+        }
+
+        String snap(GlowView g) {
+            return "att=" + g.isAttachedToWindow() + " vis=" + g.getWindowVisibility()
+                    + " size=" + g.getWidth() + "x" + g.getHeight()
+                    + " c=" + g.cTicks + " h=" + g.hTicks + " dc=" + g.drawCalls + " d=" + g.draws;
         }
     }
 }
@@ -648,35 +670,49 @@ class GlowView extends View {
     final int[] colors;
     final Matrix mat = new Matrix();
     final RectF rect = new RectF();
+    final Handler h = new Handler(Looper.getMainLooper());
     SweepGradient sg;
     float k, angle;
     long start;
     int tin, thold, tout;
     boolean running;
     Runnable endCb;
-    int frames, draws;
+    int cTicks, hTicks, draws, drawCalls;
     float maxK;
+
+    void step() {
+        long ms = SystemClock.uptimeMillis() - start;
+        int total = tin + thold + tout;
+        if (ms >= total) {
+            finish();
+            return;
+        }
+        float f;
+        if (ms < tin) f = ms / (float) tin;
+        else if (ms < tin + thold) f = 1f;
+        else f = 1f - (ms - tin - thold) / (float) tout;
+        f = Math.max(0f, Math.min(1f, f));
+        k = f * f * (3f - 2f * f);
+        if (k > maxK) maxK = k;
+        angle = 360f * 0.7f * ms / total;
+        invalidate();
+    }
 
     final Choreographer.FrameCallback cb = new Choreographer.FrameCallback() {
         public void doFrame(long frameTimeNanos) {
             if (!running) return;
-            long ms = SystemClock.uptimeMillis() - start;
-            int total = tin + thold + tout;
-            if (ms >= total) {
-                finish();
-                return;
-            }
-            float f;
-            if (ms < tin) f = ms / (float) tin;
-            else if (ms < tin + thold) f = 1f;
-            else f = 1f - (ms - tin - thold) / (float) tout;
-            f = Math.max(0f, Math.min(1f, f));
-            k = f * f * (3f - 2f * f);
-            if (k > maxK) maxK = k;
-            frames++;
-            angle = 360f * 0.7f * ms / total;
-            invalidate();
-            Choreographer.getInstance().postFrameCallback(this);
+            cTicks++;
+            step();
+            if (running) Choreographer.getInstance().postFrameCallback(this);
+        }
+    };
+
+    final Runnable hstep = new Runnable() {
+        public void run() {
+            if (!running) return;
+            hTicks++;
+            step();
+            if (running) h.postDelayed(this, 16);
         }
     };
 
@@ -689,6 +725,8 @@ class GlowView extends View {
     void finish() {
         running = false;
         Choreographer.getInstance().removeFrameCallback(cb);
+        h.removeCallbacks(hstep);
+        h.removeCallbacks(safety);
         if (endCb != null) endCb.run();
     }
 
@@ -709,18 +747,22 @@ class GlowView extends View {
         tout = out;
         endCb = end;
         start = SystemClock.uptimeMillis();
-        frames = 0;
+        cTicks = 0;
+        hTicks = 0;
         draws = 0;
+        drawCalls = 0;
         maxK = 0f;
         running = true;
         Choreographer.getInstance().postFrameCallback(cb);
-        postDelayed(safety, in + hold + out + 300);
+        h.postDelayed(hstep, 16);
+        h.postDelayed(safety, in + hold + out + 300);
     }
 
     void stop() {
         running = false;
         Choreographer.getInstance().removeFrameCallback(cb);
-        removeCallbacks(safety);
+        h.removeCallbacks(hstep);
+        h.removeCallbacks(safety);
     }
 
     @Override
@@ -742,6 +784,7 @@ class GlowView extends View {
 
     @Override
     protected void onDraw(Canvas c) {
+        drawCalls++;
         if (sg == null || k <= 0f) return;
         draws++;
         mat.setRotate(angle, getWidth() / 2f, getHeight() / 2f);
