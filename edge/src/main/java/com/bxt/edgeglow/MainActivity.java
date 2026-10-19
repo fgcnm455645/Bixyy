@@ -1,9 +1,6 @@
 package com.bxt.edgeglow;
 
 import android.accessibilityservice.AccessibilityService;
-import android.animation.Animator;
-import android.animation.AnimatorListenerAdapter;
-import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Notification;
@@ -31,29 +28,38 @@ import android.os.SystemClock;
 import android.provider.Settings;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
+import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
-import android.view.animation.LinearInterpolator;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.CompoundButton;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 public class MainActivity extends Activity {
     static final String PREFS = "cfg";
+    static final String[] CNAMES = {"Red", "Orange", "Yellow", "Green", "Cyan", "Blue",
+            "Purple", "Pink", "White", "Custom hex..."};
+    static final int[] CVALS = {0xFFFF3B30, 0xFFFF9500, 0xFFFFD60A, 0xFF34C759, 0xFF22D3EE,
+            0xFF2F7BFF, 0xFFB14CFF, 0xFFFF4DA6, 0xFFFFFFFF, 0};
     TextView status;
     SharedPreferences sp;
 
@@ -71,7 +77,7 @@ public class MainActivity extends Activity {
         root.addView(title);
 
         status = new TextView(this);
-        status.setTextSize(16);
+        status.setTextSize(15);
         status.setPadding(0, dp(8), 0, dp(8));
         root.addView(status);
 
@@ -85,6 +91,11 @@ public class MainActivity extends Activity {
                 startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
             }
         }));
+        root.addView(button("3) Battery: set to Unrestricted", new View.OnClickListener() {
+            public void onClick(View v) {
+                startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            }
+        }));
         root.addView(button("App info (Allow restricted settings)", new View.OnClickListener() {
             public void onClick(View v) {
                 startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -92,68 +103,46 @@ public class MainActivity extends Activity {
             }
         }));
 
-        TextView l1 = new TextView(this);
-        l1.setText("Notifications");
-        l1.setTextSize(18);
-        l1.setPadding(0, dp(24), 0, 0);
-        root.addView(l1);
+        heading(root, "Notifications");
         check(root, "Glow on notifications", "notif_on", true);
         check(root, "Use each app's color", "notif_appcolor", true);
         check(root, "Skip silent notifications", "notif_skip_silent", true);
         check(root, "Skip when Do Not Disturb is on", "notif_skip_dnd", true);
-
-        final RadioGroup rg3 = new RadioGroup(this);
-        final RadioButton rbAll = new RadioButton(this);
-        rbAll.setText("All apps");
-        rbAll.setId(View.generateViewId());
-        final RadioButton rbSel = new RadioButton(this);
-        rbSel.setText("Selected apps only");
-        rbSel.setId(View.generateViewId());
-        rg3.addView(rbAll);
-        rg3.addView(rbSel);
-        rg3.check("selected".equals(sp.getString("notif_mode", "all")) ? rbSel.getId() : rbAll.getId());
-        rg3.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
-            public void onCheckedChanged(RadioGroup g, int id) {
-                sp.edit().putString("notif_mode", id == rbSel.getId() ? "selected" : "all").apply();
-            }
-        });
-        root.addView(rg3);
+        radio(root, "notif_mode", "all",
+                new String[]{"All apps", "Selected apps only"},
+                new String[]{"all", "selected"});
         root.addView(button("Choose apps...", new View.OnClickListener() {
             public void onClick(View v) {
                 showAppPicker();
             }
         }));
 
-        TextView l2 = new TextView(this);
-        l2.setText("Glow style");
-        l2.setTextSize(18);
-        l2.setPadding(0, dp(24), 0, 0);
-        root.addView(l2);
-
-        final RadioGroup rg2 = new RadioGroup(this);
-        final RadioButton rbB = new RadioButton(this);
-        rbB.setText("Blue-purple (when not using app colors)");
-        rbB.setId(View.generateViewId());
-        final RadioButton rbG = new RadioButton(this);
-        rbG.setText("Rainbow");
-        rbG.setId(View.generateViewId());
-        rg2.addView(rbB);
-        rg2.addView(rbG);
-        rg2.check("gemini".equals(sp.getString("glow_style", "bixby")) ? rbG.getId() : rbB.getId());
-        rg2.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
-            public void onCheckedChanged(RadioGroup g, int id) {
-                sp.edit().putString("glow_style", id == rbG.getId() ? "gemini" : "bixby").apply();
-            }
-        });
-        root.addView(rg2);
-
-        seek(root, "Glow depth (dp)", "glow_depth2", 10, 40);
+        heading(root, "Shape");
+        radio(root, "glow_shape", "line",
+                new String[]{"Thin line (Samsung-like)", "Soft glow"},
+                new String[]{"line", "soft"});
+        check(root, "Soft halo around the line", "line_halo", true);
+        seek(root, "Line thickness (dp)", "line_w", 4, 14);
+        seek(root, "Soft glow depth (dp)", "glow_depth2", 10, 40);
         seek(root, "Screen corner radius (dp)", "glow_corner", 36, 80);
-        seek(root, "Hold time (ms)", "glow_hold2", 500, 2000);
+        seek(root, "Hold time (ms)", "hold_ms", 800, 2000);
+
+        heading(root, "Colors (when not using each app's color)");
+        radio(root, "glow_palette", "rainbow",
+                new String[]{"Rainbow", "Two colors", "One color", "Blue-purple"},
+                new String[]{"rainbow", "two", "one", "bixby"});
+        colorRow(root, "Color 1", "color1", 0xFF2F7BFF);
+        colorRow(root, "Color 2", "color2", 0xFFB14CFF);
 
         root.addView(button("Test glow", new View.OnClickListener() {
             public void onClick(View v) {
-                sp.edit().putLong("glow_test", System.currentTimeMillis()).apply();
+                GlowService s = GlowService.instance;
+                if (s == null) {
+                    Toast.makeText(MainActivity.this, "Overlay service is not running",
+                            Toast.LENGTH_LONG).show();
+                } else {
+                    s.showGlow(0);
+                }
             }
         }));
 
@@ -165,12 +154,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        status.setText((isServiceOn()
-                ? "Accessibility service: ON"
-                : "Accessibility service: OFF - enable \"Edge Glow\"")
-                + "\n" + (notifAccessOn()
-                ? "Notification access: ON"
-                : "Notification access: OFF - enable \"Edge Glow\""));
+        status.setText("Accessibility service: " + (isServiceOn() ? "ON" : "OFF - enable \"Edge Glow\"")
+                + "\nOverlay service running: " + (GlowService.instance != null ? "YES" : "NO")
+                + "\nNotification access: " + (notifAccessOn() ? "ON" : "OFF - enable \"Edge Glow\"")
+                + "\nLast notification: " + sp.getString("last_event", "none yet"));
     }
 
     boolean isServiceOn() {
@@ -185,6 +172,14 @@ public class MainActivity extends Activity {
         return s != null && s.contains(getPackageName());
     }
 
+    void heading(LinearLayout root, String text) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextSize(18);
+        t.setPadding(0, dp(24), 0, 0);
+        root.addView(t);
+    }
+
     void check(LinearLayout root, String text, final String key, boolean def) {
         CheckBox c = new CheckBox(this);
         c.setText(text);
@@ -195,6 +190,82 @@ public class MainActivity extends Activity {
             }
         });
         root.addView(c);
+    }
+
+    void radio(LinearLayout root, final String key, String def, String[] labels, final String[] values) {
+        RadioGroup g = new RadioGroup(this);
+        final int[] ids = new int[labels.length];
+        String cur = sp.getString(key, def);
+        for (int i = 0; i < labels.length; i++) {
+            RadioButton r = new RadioButton(this);
+            r.setText(labels[i]);
+            r.setId(View.generateViewId());
+            ids[i] = r.getId();
+            g.addView(r);
+            if (values[i].equals(cur)) g.check(ids[i]);
+        }
+        g.setOnCheckedChangeListener(new RadioGroup.OnCheckedChangeListener() {
+            public void onCheckedChanged(RadioGroup rg, int id) {
+                for (int i = 0; i < ids.length; i++) {
+                    if (ids[i] == id) sp.edit().putString(key, values[i]).apply();
+                }
+            }
+        });
+        root.addView(g);
+    }
+
+    void colorRow(LinearLayout root, String label, final String key, int def) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        final View sw = new View(this);
+        sw.setBackgroundColor(sp.getInt(key, def));
+        row.addView(button(label, new View.OnClickListener() {
+            public void onClick(View v) {
+                pickColor(key, sw);
+            }
+        }), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(44), dp(44));
+        lp.setMargins(dp(8), 0, 0, 0);
+        row.addView(sw, lp);
+        root.addView(row);
+    }
+
+    void pickColor(final String key, final View sw) {
+        new AlertDialog.Builder(this)
+                .setTitle("Pick a color")
+                .setItems(CNAMES, new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int which) {
+                        if (CVALS[which] != 0) {
+                            sp.edit().putInt(key, CVALS[which]).apply();
+                            sw.setBackgroundColor(CVALS[which]);
+                        } else {
+                            hexDialog(key, sw);
+                        }
+                    }
+                })
+                .show();
+    }
+
+    void hexDialog(final String key, final View sw) {
+        final EditText et = new EditText(this);
+        et.setHint("#RRGGBB");
+        new AlertDialog.Builder(this)
+                .setTitle("Custom color")
+                .setView(et)
+                .setPositiveButton("OK", new DialogInterface.OnClickListener() {
+                    public void onClick(DialogInterface d, int w) {
+                        try {
+                            int c = Color.parseColor(et.getText().toString().trim()) | 0xFF000000;
+                            sp.edit().putInt(key, c).apply();
+                            sw.setBackgroundColor(c);
+                        } catch (Throwable t) {
+                            Toast.makeText(MainActivity.this, "Invalid color", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     void showAppPicker() {
@@ -276,35 +347,52 @@ public class MainActivity extends Activity {
 
         @Override
         public void onNotificationPosted(StatusBarNotification sbn) {
+            SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
+            String pkg = sbn.getPackageName();
+            String result;
             try {
-                handle(sbn);
-            } catch (Throwable t) {}
+                String why = decide(sp, sbn, pkg);
+                if (why != null) {
+                    result = "skipped (" + why + ")";
+                } else {
+                    GlowService s = GlowService.instance;
+                    if (s == null) {
+                        result = "overlay service not running";
+                    } else {
+                        int color = sp.getBoolean("notif_appcolor", true) ? dominant(pkg) : 0;
+                        s.showGlow(color);
+                        result = "glow shown";
+                    }
+                }
+            } catch (Throwable t) {
+                result = "error: " + t.getClass().getSimpleName();
+            }
+            String time = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
+            sp.edit().putString("last_event", time + "  " + pkg + "  " + result).apply();
         }
 
-        void handle(StatusBarNotification sbn) {
-            SharedPreferences sp = getSharedPreferences(PREFS, MODE_PRIVATE);
-            if (!sp.getBoolean("notif_on", true)) return;
-            String pkg = sbn.getPackageName();
-            if (pkg.equals(getPackageName())) return;
+        String decide(SharedPreferences sp, StatusBarNotification sbn, String pkg) {
+            if (!sp.getBoolean("notif_on", true)) return "disabled";
+            if (pkg.equals(getPackageName())) return "own app";
             Notification n = sbn.getNotification();
-            if (sbn.isOngoing() || (n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) return;
+            if (sbn.isOngoing() || (n.flags & Notification.FLAG_GROUP_SUMMARY) != 0) return "ongoing or group";
             if (sp.getBoolean("notif_skip_silent", true)) {
                 RankingMap rm = getCurrentRanking();
                 Ranking r = new Ranking();
                 if (rm != null && rm.getRanking(sbn.getKey(), r)
-                        && r.getImportance() < NotificationManager.IMPORTANCE_DEFAULT) return;
+                        && r.getImportance() < NotificationManager.IMPORTANCE_DEFAULT) return "silent";
             }
-            if (sp.getBoolean("notif_skip_dnd", true) && getCurrentInterruptionFilter() > 1) return;
+            if (sp.getBoolean("notif_skip_dnd", true) && getCurrentInterruptionFilter() > 1) {
+                return "do not disturb";
+            }
             if ("selected".equals(sp.getString("notif_mode", "all"))) {
                 Set<String> allowed = sp.getStringSet("notif_apps", new HashSet<String>());
-                if (!allowed.contains(pkg)) return;
+                if (!allowed.contains(pkg)) return "app not selected";
             }
             long now = SystemClock.elapsedRealtime();
-            if (now - last < 1500) return;
+            if (now - last < 1500) return "too soon after the previous one";
             last = now;
-            int color = sp.getBoolean("notif_appcolor", true) ? dominant(pkg) : 0;
-            sp.edit().putInt("notif_color", color)
-                    .putLong("notif_glow", System.currentTimeMillis()).apply();
+            return null;
         }
 
         int dominant(String pkg) {
@@ -335,27 +423,17 @@ public class MainActivity extends Activity {
     }
 
     public static class GlowService extends AccessibilityService {
+        static GlowService instance;
         WindowManager wm;
-        View glow;
-        ValueAnimator anim;
+        GlowView glow;
         SharedPreferences sp;
-        final SharedPreferences.OnSharedPreferenceChangeListener lis =
-                new SharedPreferences.OnSharedPreferenceChangeListener() {
-                    public void onSharedPreferenceChanged(SharedPreferences p, String k) {
-                        if ("glow_test".equals(k)) {
-                            showGlow(0);
-                        } else if ("notif_glow".equals(k)) {
-                            showGlow(sp.getInt("notif_color", 0));
-                        }
-                    }
-                };
 
         @Override
         protected void onServiceConnected() {
             super.onServiceConnected();
+            instance = this;
             wm = (WindowManager) getSystemService(WINDOW_SERVICE);
             sp = getSharedPreferences(PREFS, MODE_PRIVATE);
-            sp.registerOnSharedPreferenceChangeListener(lis);
         }
 
         @Override
@@ -367,27 +445,25 @@ public class MainActivity extends Activity {
         @Override
         public boolean onUnbind(Intent i) {
             hideGlow();
-            if (sp != null) sp.unregisterOnSharedPreferenceChangeListener(lis);
+            if (instance == this) instance = null;
             return super.onUnbind(i);
         }
 
-        void hideGlow() {
-            if (anim != null) {
-                anim.removeAllListeners();
-                anim.cancel();
-                anim = null;
-            }
-            if (glow != null && wm != null) {
-                try { wm.removeView(glow); } catch (Throwable t) {}
-            }
-            glow = null;
+        @Override
+        public void onDestroy() {
+            hideGlow();
+            if (instance == this) instance = null;
+            super.onDestroy();
         }
 
-        static int[] palette(String style) {
-            if ("gemini".equals(style)) {
-                return new int[]{0xFF4285F4, 0xFF9B72CB, 0xFFD96570, 0xFFF9AB00, 0xFF34A853, 0xFF4285F4};
+        void hideGlow() {
+            if (glow != null) {
+                glow.stop();
+                if (wm != null) {
+                    try { wm.removeView(glow); } catch (Throwable t) {}
+                }
             }
-            return new int[]{0xFF2F7BFF, 0xFF4A4BEF, 0xFF7B3FE4, 0xFFB9A8FF, 0xFF7B3FE4, 0xFF4A4BEF, 0xFF2F7BFF};
+            glow = null;
         }
 
         static int mix(int c, int t, float f) {
@@ -396,16 +472,29 @@ public class MainActivity extends Activity {
                     (int) (Color.blue(c) * (1 - f) + Color.blue(t) * f));
         }
 
+        int[] colorsFor(int accent) {
+            if (accent != 0) return new int[]{accent, mix(accent, 0xFFFFFFFF, 0.5f), accent};
+            String pal = sp.getString("glow_palette", "rainbow");
+            int c1 = sp.getInt("color1", 0xFF2F7BFF);
+            int c2 = sp.getInt("color2", 0xFFB14CFF);
+            if ("one".equals(pal)) return new int[]{c1, mix(c1, 0xFFFFFFFF, 0.5f), c1};
+            if ("two".equals(pal)) return new int[]{c1, c2, c1};
+            if ("bixby".equals(pal)) {
+                return new int[]{0xFF2F7BFF, 0xFF4A4BEF, 0xFF7B3FE4, 0xFFB9A8FF, 0xFF7B3FE4, 0xFF4A4BEF, 0xFF2F7BFF};
+            }
+            return new int[]{0xFF3D7BFF, 0xFFB14CFF, 0xFFFF4D8D, 0xFFFFB020, 0xFF34D058, 0xFF22C7E8, 0xFF3D7BFF};
+        }
+
         void showGlow(int accent) {
             if (wm == null || sp == null) return;
             hideGlow();
             float d = getResources().getDisplayMetrics().density;
-            final GlowView g = new GlowView(this,
-                    (int) (sp.getInt("glow_depth2", 10) * d),
+            boolean line = !"soft".equals(sp.getString("glow_shape", "line"));
+            final GlowView g = new GlowView(this, line, sp.getBoolean("line_halo", true),
+                    (int) (Math.max(1, sp.getInt("line_w", 4)) * d),
+                    (int) (Math.max(2, sp.getInt("glow_depth2", 10)) * d),
                     sp.getInt("glow_corner", 36) * d,
-                    accent != 0
-                            ? new int[]{accent, mix(accent, 0xFFFFFFFF, 0.55f), accent}
-                            : palette(sp.getString("glow_style", "bixby")));
+                    colorsFor(accent));
             WindowManager.LayoutParams p = new WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.MATCH_PARENT,
@@ -425,64 +514,93 @@ public class MainActivity extends Activity {
                 return;
             }
             glow = g;
-            final int in = 300, out = 500;
-            final int hold = Math.max(100, sp.getInt("glow_hold2", 500));
-            final int total = in + hold + out;
-            anim = ValueAnimator.ofFloat(0f, 1f);
-            anim.setDuration(total);
-            anim.setInterpolator(new LinearInterpolator());
-            anim.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
-                public void onAnimationUpdate(ValueAnimator a) {
-                    float t = a.getAnimatedFraction();
-                    float ms = t * total;
-                    float k;
-                    if (ms < in) k = ms / in;
-                    else if (ms < in + hold) k = 1f;
-                    else k = 1f - (ms - in - hold) / out;
-                    k = Math.max(0f, Math.min(1f, k));
-                    k = k * k * (3f - 2f * k);
-                    g.set(k, 360f * 0.7f * t);
+            g.play(300, Math.max(100, sp.getInt("hold_ms", 800)), 500, new Runnable() {
+                public void run() {
+                    if (glow == g) hideGlow();
                 }
             });
-            anim.addListener(new AnimatorListenerAdapter() {
-                @Override
-                public void onAnimationEnd(Animator a) {
-                    hideGlow();
-                }
-            });
-            anim.start();
         }
     }
 }
 
 class GlowView extends View {
     final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    final int[] colors;
-    final int depth;
+    final boolean line, halo;
+    final int lineW, depth;
     final float corner;
+    final int[] colors;
     final Matrix mat = new Matrix();
     final RectF rect = new RectF();
     SweepGradient sg;
     float k, angle;
+    long start;
+    int tin, thold, tout;
+    boolean running;
+    Runnable endCb;
 
-    GlowView(Context c, int depth, float corner, int[] colors) {
+    final Runnable tick = new Runnable() {
+        public void run() {
+            if (!running) return;
+            long ms = SystemClock.uptimeMillis() - start;
+            int total = tin + thold + tout;
+            if (ms >= total) {
+                running = false;
+                if (endCb != null) endCb.run();
+                return;
+            }
+            float f;
+            if (ms < tin) f = ms / (float) tin;
+            else if (ms < tin + thold) f = 1f;
+            else f = 1f - (ms - tin - thold) / (float) tout;
+            f = Math.max(0f, Math.min(1f, f));
+            k = f * f * (3f - 2f * f);
+            angle = 360f * 0.7f * ms / total;
+            invalidate();
+            postOnAnimation(this);
+        }
+    };
+
+    GlowView(Context c, boolean line, boolean halo, int lineW, int depth, float corner, int[] colors) {
         super(c);
+        this.line = line;
+        this.halo = halo;
+        this.lineW = lineW;
         this.depth = depth;
         this.corner = corner;
         this.colors = colors;
         paint.setStyle(Paint.Style.STROKE);
     }
 
-    void set(float k, float angle) {
-        this.k = k;
-        this.angle = angle;
-        invalidate();
+    void play(int in, int hold, int out, Runnable end) {
+        tin = in;
+        thold = hold;
+        tout = out;
+        endCb = end;
+        start = SystemClock.uptimeMillis();
+        running = true;
+        postOnAnimation(tick);
+    }
+
+    void stop() {
+        running = false;
+        removeCallbacks(tick);
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        running = false;
+        super.onDetachedFromWindow();
     }
 
     @Override
     protected void onSizeChanged(int w, int h, int ow, int oh) {
         sg = new SweepGradient(w / 2f, h / 2f, colors, null);
-        rect.set(0, 0, w, h);
+    }
+
+    void rr(Canvas c, float inset) {
+        rect.set(inset, inset, getWidth() - inset, getHeight() - inset);
+        float r = Math.max(0f, corner - inset);
+        c.drawRoundRect(rect, r, r, paint);
     }
 
     @Override
@@ -491,11 +609,25 @@ class GlowView extends View {
         mat.setRotate(angle, getWidth() / 2f, getHeight() / 2f);
         sg.setLocalMatrix(mat);
         paint.setShader(sg);
-        paint.setAlpha((int) (255 * k * 0.075f));
-        int layers = 16;
-        for (int i = layers; i >= 1; i--) {
-            paint.setStrokeWidth(2f * depth * i / layers);
-            c.drawRoundRect(rect, corner, corner, paint);
+        if (line) {
+            float inset = lineW / 2f + 1f;
+            if (halo) {
+                paint.setAlpha((int) (255 * k * 0.07f));
+                for (int i = 4; i >= 1; i--) {
+                    paint.setStrokeWidth(lineW * (1f + i * 0.9f));
+                    rr(c, inset);
+                }
+            }
+            paint.setAlpha((int) (255 * k));
+            paint.setStrokeWidth(lineW);
+            rr(c, inset);
+        } else {
+            paint.setAlpha((int) (255 * k * 0.075f));
+            int layers = 16;
+            for (int i = layers; i >= 1; i--) {
+                paint.setStrokeWidth(2f * depth * i / layers);
+                rr(c, 0f);
+            }
         }
     }
-          }
+            }
