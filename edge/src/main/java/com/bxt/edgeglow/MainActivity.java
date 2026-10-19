@@ -28,6 +28,7 @@ import android.os.SystemClock;
 import android.provider.Settings;
 import android.service.notification.NotificationListenerService;
 import android.service.notification.StatusBarNotification;
+import android.view.Choreographer;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -125,7 +126,7 @@ public class MainActivity extends Activity {
         seek(root, "Line thickness (dp)", "line_w", 4, 14);
         seek(root, "Soft glow depth (dp)", "glow_depth2", 10, 40);
         seek(root, "Screen corner radius (dp)", "glow_corner", 36, 80);
-        seek(root, "Hold time (ms)", "hold_ms", 800, 2000);
+        seek(root, "Hold time (ms)", "hold_ms", 800, 5000);
 
         heading(root, "Colors (when not using each app's color)");
         radio(root, "glow_palette", "rainbow",
@@ -157,7 +158,8 @@ public class MainActivity extends Activity {
         status.setText("Accessibility service: " + (isServiceOn() ? "ON" : "OFF - enable \"Edge Glow\"")
                 + "\nOverlay service running: " + (GlowService.instance != null ? "YES" : "NO")
                 + "\nNotification access: " + (notifAccessOn() ? "ON" : "OFF - enable \"Edge Glow\"")
-                + "\nLast notification: " + sp.getString("last_event", "none yet"));
+                + "\nLast notification: " + sp.getString("last_event", "none yet")
+                + "\nLast glow: " + sp.getString("glow_stats", "none yet"));
     }
 
     boolean isServiceOn() {
@@ -516,6 +518,8 @@ public class MainActivity extends Activity {
             glow = g;
             g.play(300, Math.max(100, sp.getInt("hold_ms", 800)), 500, new Runnable() {
                 public void run() {
+                    sp.edit().putString("glow_stats", "ticks=" + g.frames + " draws=" + g.draws
+                            + " maxK=" + String.format(Locale.US, "%.2f", g.maxK)).apply();
                     if (glow == g) hideGlow();
                 }
             });
@@ -537,15 +541,16 @@ class GlowView extends View {
     int tin, thold, tout;
     boolean running;
     Runnable endCb;
+    int frames, draws;
+    float maxK;
 
-    final Runnable tick = new Runnable() {
-        public void run() {
+    final Choreographer.FrameCallback cb = new Choreographer.FrameCallback() {
+        public void doFrame(long frameTimeNanos) {
             if (!running) return;
             long ms = SystemClock.uptimeMillis() - start;
             int total = tin + thold + tout;
             if (ms >= total) {
-                running = false;
-                if (endCb != null) endCb.run();
+                finish();
                 return;
             }
             float f;
@@ -554,11 +559,25 @@ class GlowView extends View {
             else f = 1f - (ms - tin - thold) / (float) tout;
             f = Math.max(0f, Math.min(1f, f));
             k = f * f * (3f - 2f * f);
+            if (k > maxK) maxK = k;
+            frames++;
             angle = 360f * 0.7f * ms / total;
             invalidate();
-            postOnAnimation(this);
+            Choreographer.getInstance().postFrameCallback(this);
         }
     };
+
+    final Runnable safety = new Runnable() {
+        public void run() {
+            if (running) finish();
+        }
+    };
+
+    void finish() {
+        running = false;
+        Choreographer.getInstance().removeFrameCallback(cb);
+        if (endCb != null) endCb.run();
+    }
 
     GlowView(Context c, boolean line, boolean halo, int lineW, int depth, float corner, int[] colors) {
         super(c);
@@ -577,13 +596,18 @@ class GlowView extends View {
         tout = out;
         endCb = end;
         start = SystemClock.uptimeMillis();
+        frames = 0;
+        draws = 0;
+        maxK = 0f;
         running = true;
-        postOnAnimation(tick);
+        Choreographer.getInstance().postFrameCallback(cb);
+        postDelayed(safety, in + hold + out + 300);
     }
 
     void stop() {
         running = false;
-        removeCallbacks(tick);
+        Choreographer.getInstance().removeFrameCallback(cb);
+        removeCallbacks(safety);
     }
 
     @Override
@@ -606,6 +630,7 @@ class GlowView extends View {
     @Override
     protected void onDraw(Canvas c) {
         if (sg == null || k <= 0f) return;
+        draws++;
         mat.setRotate(angle, getWidth() / 2f, getHeight() / 2f);
         sg.setLocalMatrix(mat);
         paint.setShader(sg);
@@ -630,4 +655,4 @@ class GlowView extends View {
             }
         }
     }
-            }
+                            }
