@@ -192,7 +192,7 @@ public class MainActivity extends Activity {
                 + "\nNotification access: " + (notifAccessOn() ? "ON" : "OFF - enable \"Edge Glow\"")
                 + "\nKeep-alive service: " + (KeepAlive.running ? "running" : "not running")
                 + "\nLast notification: " + sp.getString("last_event", "none yet")
-                + "\nLast glow: " + sp.getString("glow_stats", "none yet"));
+                + "\nGlow log:\n" + sp.getString("glow_log", "none yet"));
     }
 
     void syncKeep() {
@@ -575,9 +575,27 @@ public class MainActivity extends Activity {
             return new int[]{0xFF3D7BFF, 0xFFB14CFF, 0xFFFF4D8D, 0xFFFFB020, 0xFF34D058, 0xFF22C7E8, 0xFF3D7BFF};
         }
 
-        void showGlow(int accent) {
+        void stat(String m) {
+            String old = sp.getString("glow_log", "");
+            String[] lines = old.isEmpty() ? new String[0] : old.split("\n");
+            StringBuilder sb = new StringBuilder();
+            for (int i = Math.max(0, lines.length - 4); i < lines.length; i++) sb.append(lines[i]).append("\n");
+            sb.append(new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date())).append(" ").append(m);
+            sp.edit().putString("glow_log", sb.toString()).apply();
+        }
+
+        void showGlow(final int accent) {
+            if (Looper.myLooper() != Looper.getMainLooper()) {
+                new Handler(Looper.getMainLooper()).post(new Runnable() {
+                    public void run() {
+                        showGlow(accent);
+                    }
+                });
+                return;
+            }
             if (wm == null || sp == null) return;
             hideGlow();
+            stat("start");
             float d = getResources().getDisplayMetrics().density;
             boolean line = !"soft".equals(sp.getString("glow_shape", "line"));
             final GlowView g = new GlowView(this, line, sp.getBoolean("line_halo", true),
@@ -601,16 +619,23 @@ public class MainActivity extends Activity {
             try {
                 wm.addView(g, p);
             } catch (Throwable t) {
+                stat("addView FAILED: " + t.getClass().getSimpleName() + " " + t.getMessage());
                 return;
             }
             glow = g;
             g.play(300, Math.max(100, sp.getInt("hold_ms", 800)), 500, new Runnable() {
                 public void run() {
-                    sp.edit().putString("glow_stats", "ticks=" + g.frames + " draws=" + g.draws
-                            + " maxK=" + String.format(Locale.US, "%.2f", g.maxK)).apply();
+                    stat("end ticks=" + g.frames + " draws=" + g.draws
+                            + " maxK=" + String.format(Locale.US, "%.2f", g.maxK));
                     if (glow == g) hideGlow();
                 }
             });
+            new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                public void run() {
+                    stat("+1.5s attached=" + g.isAttachedToWindow() + " size=" + g.getWidth() + "x"
+                            + g.getHeight() + " ticks=" + g.frames + " draws=" + g.draws);
+                }
+            }, 1500);
         }
     }
 }
