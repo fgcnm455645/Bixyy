@@ -4,7 +4,9 @@ import android.accessibilityservice.AccessibilityService;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Notification;
+import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.app.Service;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.DialogInterface;
@@ -12,6 +14,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -24,6 +27,9 @@ import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.service.notification.NotificationListenerService;
@@ -68,6 +74,10 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         sp = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission("android.permission.POST_NOTIFICATIONS") != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 1);
+        }
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(20), dp(48), dp(20), dp(24));
@@ -97,6 +107,16 @@ public class MainActivity extends Activity {
                 startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
             }
         }));
+        CheckBox ck = new CheckBox(this);
+        ck.setText("Keep running in background (shows a small notification)");
+        ck.setChecked(sp.getBoolean("keepalive", true));
+        ck.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            public void onCheckedChanged(CompoundButton b, boolean on) {
+                sp.edit().putBoolean("keepalive", on).apply();
+                syncKeep();
+            }
+        });
+        root.addView(ck);
         root.addView(button("App info (Allow restricted settings)", new View.OnClickListener() {
             public void onClick(View v) {
                 startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -135,6 +155,17 @@ public class MainActivity extends Activity {
         colorRow(root, "Color 1", "color1", 0xFF2F7BFF);
         colorRow(root, "Color 2", "color2", 0xFFB14CFF);
 
+        root.addView(button("Test glow in 5 seconds (then go Home)", new View.OnClickListener() {
+            public void onClick(View v) {
+                Toast.makeText(MainActivity.this, "Go to the home screen now", Toast.LENGTH_LONG).show();
+                new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                    public void run() {
+                        GlowService s = GlowService.instance;
+                        if (s != null) s.showGlow(0);
+                    }
+                }, 5000);
+            }
+        }));
         root.addView(button("Test glow", new View.OnClickListener() {
             public void onClick(View v) {
                 GlowService s = GlowService.instance;
@@ -155,11 +186,25 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        syncKeep();
         status.setText("Accessibility service: " + (isServiceOn() ? "ON" : "OFF - enable \"Edge Glow\"")
                 + "\nOverlay service running: " + (GlowService.instance != null ? "YES" : "NO")
                 + "\nNotification access: " + (notifAccessOn() ? "ON" : "OFF - enable \"Edge Glow\"")
+                + "\nKeep-alive service: " + (KeepAlive.running ? "running" : "not running")
                 + "\nLast notification: " + sp.getString("last_event", "none yet")
                 + "\nLast glow: " + sp.getString("glow_stats", "none yet"));
+    }
+
+    void syncKeep() {
+        try {
+            Intent i = new Intent(this, KeepAlive.class);
+            if (sp.getBoolean("keepalive", true)) {
+                if (Build.VERSION.SDK_INT >= 26) startForegroundService(i);
+                else startService(i);
+            } else {
+                stopService(i);
+            }
+        } catch (Throwable t) {}
     }
 
     boolean isServiceOn() {
@@ -342,6 +387,49 @@ public class MainActivity extends Activity {
         });
         root.addView(t);
         root.addView(s);
+    }
+
+    public static class KeepAlive extends Service {
+        static boolean running;
+
+        @Override
+        public IBinder onBind(Intent i) {
+            return null;
+        }
+
+        @Override
+        public int onStartCommand(Intent i, int flags, int startId) {
+            try {
+                NotificationManager nm = getSystemService(NotificationManager.class);
+                Notification.Builder nb;
+                if (Build.VERSION.SDK_INT >= 26) {
+                    nm.createNotificationChannel(new NotificationChannel("keep", "Edge Glow running",
+                            NotificationManager.IMPORTANCE_MIN));
+                    nb = new Notification.Builder(this, "keep");
+                } else {
+                    nb = new Notification.Builder(this);
+                }
+                nb.setSmallIcon(android.R.drawable.ic_dialog_info)
+                        .setContentTitle("Edge Glow is running")
+                        .setOngoing(true);
+                if (Build.VERSION.SDK_INT >= 34) {
+                    startForeground(1, nb.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+                } else {
+                    startForeground(1, nb.build());
+                }
+                running = true;
+            } catch (Throwable t) {
+                running = false;
+                stopSelf();
+            }
+            return START_STICKY;
+        }
+
+        @Override
+        public void onDestroy() {
+            running = false;
+            super.onDestroy();
+        }
     }
 
     public static class NotifService extends NotificationListenerService {
@@ -655,4 +743,4 @@ class GlowView extends View {
             }
         }
     }
-                            }
+            }
