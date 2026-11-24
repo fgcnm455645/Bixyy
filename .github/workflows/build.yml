@@ -1,25 +1,76 @@
-name: Build APK
+name: Build APK from ZIP
+
+# Upload a zip (for example Bixyy-part2.zip) to the root of the repo.
+# GitHub unzips it, builds the project inside and publishes the APKs under "Artifacts".
 on:
   push:
+    paths:
+      - '*.zip'
   workflow_dispatch:
+    inputs:
+      zip_name:
+        description: 'Zip to build (leave empty to use the newest one)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Pick and unzip the project
+        run: |
+          set -e
+          ZIP="${{ github.event.inputs.zip_name }}"
+          if [ -z "$ZIP" ]; then
+            # zips touched by the last commit (the one you just uploaded)
+            ZIP=$(git diff --name-only --diff-filter=AM HEAD~1 HEAD -- '*.zip' 2>/dev/null | grep -v '^bixby-test.zip$' | sort -V | tail -n1 || true)
+          fi
+          if [ -z "$ZIP" ]; then
+            # fallback: newest by version number in the file name
+            ZIP=$(ls -1 *.zip 2>/dev/null | grep -v '^bixby-test.zip$' | sort -V | tail -n1 || true)
+          fi
+          if [ -z "$ZIP" ] || [ ! -f "$ZIP" ]; then
+            echo "No zip file found in the repo root"; exit 1
+          fi
+          echo "Building from: $ZIP"
+          rm -rf work && mkdir work
+          unzip -q "$ZIP" -d work
+          SETTINGS=$(find work -maxdepth 3 -name settings.gradle | head -n1)
+          if [ -z "$SETTINGS" ]; then
+            echo "settings.gradle not found inside $ZIP"; exit 1
+          fi
+          ROOT=$(dirname "$SETTINGS")
+          echo "Project root: $ROOT"
+          echo "ROOT=$ROOT" >> "$GITHUB_ENV"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.7
-      - run: gradle assembleDebug --no-daemon
-      - uses: actions/upload-artifact@v4
-        with:
-          name: BixbyTest-apk
-          path: app/build/outputs/apk/debug/*.apk
+
+      - name: Build
+        working-directory: ${{ env.ROOT }}
+        run: gradle assembleDebug --no-daemon
+
       - uses: actions/upload-artifact@v4
         with:
           name: EdgeGlow-apk
-          path: edge/build/outputs/apk/debug/*.apk
+          path: ${{ env.ROOT }}/edge/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BixbyTest-apk
+          path: ${{ env.ROOT }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
